@@ -9,9 +9,9 @@ const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://gamespratfor
 
 export default function Auth({ onLogin }: AuthProps) {
   const [isRegistering, setIsRegistering] = useState(false);
-  const [email, setEmail] = useState('');
+  const [loginId, setLoginId] = useState('');
   const [password, setPassword] = useState('');
-  const [username, setUsername] = useState('');
+  const [withdrawalMobile, setWithdrawalMobile] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -21,11 +21,10 @@ export default function Auth({ onLogin }: AuthProps) {
     setError('');
 
     // Input sanitization
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanLoginId = loginId.trim();
     const cleanPassword = password;
-    const cleanUsername = username.trim() || cleanEmail.split('@')[0];
+    const cleanWithdrawalMobile = withdrawalMobile.trim() || cleanLoginId;
 
-    // Client-side quick check to prevent unnecessary 400 Bad Request calls
     if (cleanPassword.length < 6) {
       setError('Password must be at least 6 characters long.');
       setLoading(false);
@@ -35,15 +34,15 @@ export default function Auth({ onLogin }: AuthProps) {
     const endpoint = isRegistering ? '/api/auth/register' : '/api/auth/login';
     
     try {
+      // Payload precisely matches the backend expectations
       const payload = isRegistering
         ? { 
-            email: cleanEmail, 
+            loginId: cleanLoginId, 
             password: cleanPassword, 
-            username: cleanUsername,
-            name: cleanUsername // Fallback in case schema uses 'name'
+            withdrawalMobile: cleanWithdrawalMobile 
           }
         : { 
-            email: cleanEmail, 
+            loginId: cleanLoginId, 
             password: cleanPassword 
           };
 
@@ -56,7 +55,6 @@ export default function Auth({ onLogin }: AuthProps) {
         body: JSON.stringify(payload),
       });
 
-      // Safely parse JSON response
       let data;
       try {
         data = await res.json();
@@ -65,9 +63,8 @@ export default function Auth({ onLogin }: AuthProps) {
       }
 
       if (!res.ok) {
-        // Extract exact server message regardless of key format
-        const serverError = data.message || data.error || data.msg || (Array.isArray(data.errors) ? data.errors[0]?.msg : null);
-        throw new Error(serverError || `Authentication failed with status ${res.status}`);
+        const serverError = data.error || data.message || data.msg || `Authentication failed with status ${res.status}`;
+        throw new Error(serverError);
       }
 
       onLogin(data.user || data);
@@ -99,37 +96,35 @@ export default function Auth({ onLogin }: AuthProps) {
       )}
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
+            Email or Phone Number
+          </label>
+          <input
+            type="text"
+            required
+            autoComplete="username"
+            placeholder="player@example.com or 0712345678"
+            value={loginId}
+            onChange={(e) => setLoginId(e.target.value)}
+            className="w-full px-4 py-3 rounded-xl bg-gray-800/80 border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all duration-200"
+          />
+        </div>
+
         {isRegistering && (
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
-              Username
+              Withdrawal Mobile (Optional)
             </label>
             <input
               type="text"
-              required={isRegistering}
-              autoComplete="username"
-              placeholder="GamerTag"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              placeholder="e.g. 0712345678"
+              value={withdrawalMobile}
+              onChange={(e) => setWithdrawalMobile(e.target.value)}
               className="w-full px-4 py-3 rounded-xl bg-gray-800/80 border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all duration-200"
             />
           </div>
         )}
-
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
-            Email Address
-          </label>
-          <input
-            type="email"
-            required
-            autoComplete="email"
-            placeholder="player@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full px-4 py-3 rounded-xl bg-gray-800/80 border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all duration-200"
-          />
-        </div>
 
         <div className="flex flex-col gap-1.5">
           <label className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
