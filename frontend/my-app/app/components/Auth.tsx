@@ -20,28 +20,60 @@ export default function Auth({ onLogin }: AuthProps) {
     setLoading(true);
     setError('');
 
+    // Input sanitization
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPassword = password;
+    const cleanUsername = username.trim() || cleanEmail.split('@')[0];
+
+    // Client-side quick check to prevent unnecessary 400 Bad Request calls
+    if (cleanPassword.length < 6) {
+      setError('Password must be at least 6 characters long.');
+      setLoading(false);
+      return;
+    }
+
     const endpoint = isRegistering ? '/api/auth/register' : '/api/auth/login';
     
     try {
+      const payload = isRegistering
+        ? { 
+            email: cleanEmail, 
+            password: cleanPassword, 
+            username: cleanUsername,
+            name: cleanUsername // Fallback in case schema uses 'name'
+          }
+        : { 
+            email: cleanEmail, 
+            password: cleanPassword 
+          };
+
       const res = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          isRegistering 
-            ? { email, password, username: username || email.split('@')[0] } 
-            : { email, password }
-        ),
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      // Safely parse JSON response
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(`Server returned non-JSON response (${res.status}). Check backend logs.`);
+      }
 
       if (!res.ok) {
-        throw new Error(data.message || 'Authentication failed');
+        // Extract exact server message regardless of key format
+        const serverError = data.message || data.error || data.msg || (Array.isArray(data.errors) ? data.errors[0]?.msg : null);
+        throw new Error(serverError || `Authentication failed with status ${res.status}`);
       }
 
       onLogin(data.user || data);
     } catch (err: any) {
-      setError(err.message || 'Something went wrong. Please try again.');
+      console.error('Auth Error:', err);
+      setError(err.message || 'Something went wrong. Please check your connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -54,13 +86,15 @@ export default function Auth({ onLogin }: AuthProps) {
           {isRegistering ? 'Create Your Account' : 'Welcome Back'}
         </h2>
         <p className="text-sm text-gray-400 mt-2">
-          {isRegistering ? 'Join the arena and start competing today.' : 'Sign in to jump back into the action.'}
+          {isRegistering 
+            ? 'Join the arena and start competing today.' 
+            : 'Sign in to jump back into the action.'}
         </p>
       </div>
 
       {error && (
-        <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm text-center font-medium">
-          {error}
+        <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm text-center font-medium animate-shake">
+          <span className="inline-block mr-1">⚠️</span> {error}
         </div>
       )}
 
@@ -72,7 +106,8 @@ export default function Auth({ onLogin }: AuthProps) {
             </label>
             <input
               type="text"
-              required
+              required={isRegistering}
+              autoComplete="username"
               placeholder="GamerTag"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -88,6 +123,7 @@ export default function Auth({ onLogin }: AuthProps) {
           <input
             type="email"
             required
+            autoComplete="email"
             placeholder="player@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -102,6 +138,7 @@ export default function Auth({ onLogin }: AuthProps) {
           <input
             type="password"
             required
+            autoComplete={isRegistering ? "new-password" : "current-password"}
             placeholder="••••••••"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -131,7 +168,9 @@ export default function Auth({ onLogin }: AuthProps) {
           }}
           className="text-sm font-medium text-gray-400 hover:text-indigo-400 transition-colors duration-200 underline-offset-4 hover:underline"
         >
-          {isRegistering ? 'Already have an account? Sign In' : 'Need an account? Register'}
+          {isRegistering 
+            ? 'Already have an account? Sign In' 
+            : "Don't have an account? Register"}
         </button>
       </div>
     </div>
