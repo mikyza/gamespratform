@@ -1,10 +1,17 @@
 "use client";
 import { useState, useEffect, useRef } from 'react';
-import { io, Socket } from 'socket.io-client';
 import Link from 'next/link';
 
 import Auth from './components/Auth';
 import Dashboard from './components/Dashboard';
+import { io } from "socket.io-client";
+
+const socket = io("https://gamespratform.onrender.com", {
+  transports: ["websocket"], // Bypasses HTTP long-polling requests
+  reconnectionAttempts: 5,
+  timeout: 10000,
+});
+
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://gamespratform.onrender.com';
 
