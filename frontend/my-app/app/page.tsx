@@ -12,6 +12,93 @@ const GAME_CATALOG: Record<string, { name: string, category: string, maxPlayers:
   chess_duel: { name: 'Clickable Chess Arena', category: 'Grandmaster', maxPlayers: 2, img: 'https://images.unsplash.com/photo-1529699211952-734e80c4d42b?w=500&q=80' }
 };
 
+// Standard Initial Chess Board Setup
+const INITIAL_CHESS_BOARD = [
+  ["r","n","b","q","k","b","n","r"],
+  ["p","p","p","p","p","p","p","p"],
+  ["","","","","","","",""],
+  ["","","","","","","",""],
+  ["","","","","","","",""],
+  ["","","","","","","",""],
+  ["P","P","P","P","P","P","P","P"],
+  ["R","N","B","Q","K","B","N","R"]
+];
+
+// Option 1: Lightweight custom move rule checker (No npm install required)
+const isValidChessMove = (piece: string, fromRow: number, fromCol: number, toRow: number, toCol: number, board: string[][]) => {
+  const rowDiff = Math.abs(toRow - fromRow);
+  const colDiff = Math.abs(toCol - fromCol);
+  const lowerPiece = piece.toLowerCase();
+
+  // Can't capture own piece color
+  const targetPiece = board[toRow][toCol];
+  if (targetPiece !== '') {
+    const isMovingWhite = piece === piece.toUpperCase();
+    const isTargetWhite = targetPiece === targetPiece.toUpperCase();
+    if (isMovingWhite === isTargetWhite) return false;
+  }
+
+  // Pawn rules
+  if (lowerPiece === 'p') {
+    const isWhite = piece === 'P';
+    const direction = isWhite ? -1 : 1;
+    const startRow = isWhite ? 6 : 1;
+
+    // Single step forward
+    if (colDiff === 0 && toRow - fromRow === direction && targetPiece === '') return true;
+    // Double step forward from start
+    if (colDiff === 0 && fromRow === startRow && toRow - fromRow === direction * 2 && targetPiece === '' && board[fromRow + direction][fromCol] === '') return true;
+    // Diagonal capture
+    if (colDiff === 1 && toRow - fromRow === direction && targetPiece !== '') return true;
+    return false;
+  }
+
+  // Rook or Queen straight line checks
+  if (lowerPiece === 'r' || lowerPiece === 'q') {
+    if (rowDiff === 0 || colDiff === 0) {
+      // Check path clearance
+      const rStep = rowDiff === 0 ? 0 : (toRow > fromRow ? 1 : -1);
+      const cStep = colDiff === 0 ? 0 : (toCol > fromCol ? 1 : -1);
+      let currR = fromRow + rStep;
+      let currC = fromCol + cStep;
+      while (currR !== toRow || currC !== toCol) {
+        if (board[currR][currC] !== '') return false;
+        currR += rStep;
+        currC += cStep;
+      }
+      return true;
+    }
+  }
+
+  // Bishop or Queen diagonal checks
+  if (lowerPiece === 'b' || lowerPiece === 'q') {
+    if (rowDiff === colDiff) {
+      const rStep = toRow > fromRow ? 1 : -1;
+      const cStep = toCol > fromCol ? 1 : -1;
+      let currR = fromRow + rStep;
+      let currC = fromCol + cStep;
+      while (currR !== toRow) {
+        if (board[currR][currC] !== '') return false;
+        currR += rStep;
+        currC += cStep;
+      }
+      return true;
+    }
+  }
+
+  // Knight L-shape
+  if (lowerPiece === 'n') {
+    if ((rowDiff === 2 && colDiff === 1) || (rowDiff === 1 && colDiff === 2)) return true;
+  }
+
+  // King single step
+  if (lowerPiece === 'k') {
+    if (rowDiff <= 1 && colDiff <= 1) return true;
+  }
+
+  return false;
+};
+
 export default function Home() {
   const [user, setUser] = useState<any>(null);
   const [viewState, setViewState] = useState<'dashboard' | 'room_waiting' | 'playing'>('dashboard');
@@ -23,7 +110,10 @@ export default function Home() {
   const [currentRoom, setCurrentRoom] = useState<any>(null);
 
   // Interactive Live Game States
-  const [boardState, setBoardState] = useState<string[]>(Array(9).fill('')); // For Tic-Tac-Toe / Grid click testing
+  const [boardState, setBoardState] = useState<string[]>(Array(9).fill('')); // For Tic-Tac-Toe
+  const [chessBoard, setChessBoard] = useState<string[][]>(INITIAL_CHESS_BOARD); // For Chess Duel
+  const [selectedPieceCoords, setSelectedPieceCoords] = useState<{row: number, col: number} | null>(null);
+
   const [isMyTurn, setIsMyTurn] = useState<boolean>(false);
   const [matchPool, setMatchPool] = useState<number>(0);
 
@@ -50,6 +140,9 @@ export default function Home() {
         setSelectedGame(gameType);
         setMatchPool(pool);
         setBoardState(Array(9).fill(''));
+        setChessBoard(INITIAL_CHESS_BOARD);
+        setSelectedPieceCoords(null);
+
         // Host goes first
         const hostSocket = players[0]?.socketId;
         setIsMyTurn(socketRef.current?.id === hostSocket);
@@ -57,7 +150,11 @@ export default function Home() {
       });
 
       socketRef.current.on('opponent_moved', ({ newBoard, nextTurnSocket }) => {
-        setBoardState(newBoard);
+        if (selectedGame === 'chess_duel') {
+          setChessBoard(newBoard);
+        } else {
+          setBoardState(newBoard);
+        }
         setIsMyTurn(socketRef.current?.id === nextTurnSocket);
       });
 
@@ -70,7 +167,7 @@ export default function Home() {
     }
 
     return () => { socketRef.current?.disconnect(); };
-  }, [user]);
+  }, [user, selectedGame]);
 
   const handleCreateRoom = (gameKey: string) => {
     setSelectedGame(gameKey);
@@ -85,7 +182,7 @@ export default function Home() {
     socketRef.current?.emit('join_room', { roomId });
   };
 
-  // Clickable Board Move handler for real-time play
+  // Tic-Tac-Toe Click Handler
   const handleCellClick = (index: number) => {
     if (!isMyTurn || boardState[index] !== '') return;
 
@@ -95,22 +192,63 @@ export default function Home() {
     setBoardState(newBoard);
     setIsMyTurn(false);
 
-    // Transmit click to opponent through websocket room
+    const nextTurnSocket = currentRoom.players.find((p: any) => p.socketId !== socketRef.current?.id)?.socketId;
+
     socketRef.current?.emit('make_move', {
       roomId: currentRoom.roomId,
-      moveData: {
-        newBoard,
-        nextTurnSocket: currentRoom.players.find((p: any) => p.socketId !== socketRef.current?.id)?.socketId
-      }
+      moveData: { newBoard, nextTurnSocket }
     });
 
-    // Check simple win condition for demonstration
     if (newBoard.every(cell => cell !== '')) {
       socketRef.current?.emit('conclude_match', {
         roomId: currentRoom.roomId,
         isDraw: true,
         payout: entryAmount
       });
+    }
+  };
+
+  // Chess Square Click Handler utilizing Option 1 Zero-Install Validation
+  const handleChessSquareClick = (row: number, col: number) => {
+    if (!isMyTurn) return;
+
+    const clickedPiece = chessBoard[row][col];
+    const isMyWhitePiece = clickedPiece !== '' && clickedPiece === clickedPiece.toUpperCase();
+    const isMyBlackPiece = clickedPiece !== '' && clickedPiece === clickedPiece.toLowerCase();
+    const amIHost = socketRef.current?.id === currentRoom?.hostSocketId;
+
+    if (!selectedPieceCoords) {
+      // Select piece if it belongs to current player turn color
+      if ((amIHost && isMyWhitePiece) || (!amIHost && isMyBlackPiece)) {
+        setSelectedPieceCoords({ row, col });
+      }
+    } else {
+      const sourcePiece = chessBoard[selectedPieceCoords.row][selectedPieceCoords.col];
+      
+      // Validate move using Option 1 helper
+      if (isValidChessMove(sourcePiece, selectedPieceCoords.row, selectedPieceCoords.col, row, col, chessBoard)) {
+        const newBoard = chessBoard.map(r => [...r]);
+        newBoard[row][col] = sourcePiece;
+        newBoard[selectedPieceCoords.row][selectedPieceCoords.col] = "";
+
+        setChessBoard(newBoard);
+        setSelectedPieceCoords(null);
+        setIsMyTurn(false);
+
+        const nextTurnSocket = currentRoom.players.find((p: any) => p.socketId !== socketRef.current?.id)?.socketId;
+
+        socketRef.current?.emit('make_move', {
+          roomId: currentRoom.roomId,
+          moveData: { newBoard, nextTurnSocket }
+        });
+      } else {
+        // Deselect or switch selection if clicking another own piece
+        if ((amIHost && isMyWhitePiece) || (!amIHost && isMyBlackPiece)) {
+          setSelectedPieceCoords({ row, col });
+        } else {
+          setSelectedPieceCoords(null);
+        }
+      }
     }
   };
 
@@ -172,7 +310,7 @@ export default function Home() {
                   activeRooms.map((room) => (
                     <div key={room.roomId} className="bg-slate-950 p-4 rounded-2xl border border-slate-800 flex items-center justify-between">
                       <div>
-                        <p className="font-bold text-white text-sm">{GAME_CATALOG[room.gameType]?.name} Room</p>
+                        <p className="font-bold text-white text-sm">{GAME_CATALOG[room.gameType]?.name || 'Game'} Room</p>
                         <p className="text-xs text-indigo-400">Host: {room.players[0]?.username} | Stake: KES {room.entryFee}</p>
                       </div>
                       <button 
@@ -190,7 +328,7 @@ export default function Home() {
           </div>
         ) : viewState === 'room_waiting' && currentRoom ? (
           
-          // Waiting Room & Handpicked Slot Lobby
+          // Waiting Room Lobby
           <div className="w-full max-w-xl mx-auto bg-slate-900/80 p-8 rounded-3xl border border-slate-800 text-center space-y-6">
             <h2 className="text-2xl font-black text-white">Room Lobby</h2>
             <p className="text-xs text-slate-400">Waiting for invited players to occupy slots ({currentRoom.players.length} / {currentRoom.maxPlayers})</p>
@@ -218,41 +356,73 @@ export default function Home() {
 
         ) : (
           
-          // Clickable Real-Time Interactive Playing Board
+          // Active Playing Screen (Renders Chess Board or Tic-Tac-Toe based on selectedGame)
           <div className="w-full flex flex-col items-center space-y-6">
             <div className="w-full flex items-center justify-between bg-slate-900/80 p-4 rounded-2xl border border-slate-800">
               <div>
-                <h3 className="font-black text-sm text-indigo-400 uppercase tracking-widest">🎮 Live Interactive Match</h3>
+                <h3 className="font-black text-sm text-indigo-400 uppercase tracking-widest">🎮 Live {GAME_CATALOG[selectedGame]?.name || 'Match'}</h3>
                 <p className="text-xs text-slate-400">Prize Pool: <span className="text-emerald-400 font-bold">KES {matchPool}</span></p>
               </div>
               <div className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider bg-slate-950 border border-slate-800">
-                {isMyTurn ? <span className="text-emerald-400 animate-pulse">🟢 Your Turn! Click Board</span> : <span className="text-amber-400">⏳ Opponent's Turn</span>}
+                {isMyTurn ? <span className="text-emerald-400 animate-pulse">🟢 Your Turn! Make Move</span> : <span className="text-amber-400">⏳ Opponent's Turn</span>}
               </div>
             </div>
 
-            {/* Clickable Grid Matrix for Real-Time Play */}
-            <div className="bg-slate-900/60 p-8 rounded-3xl border border-slate-800 shadow-2xl flex flex-col items-center">
-              <div className="grid grid-cols-3 gap-4 w-72 h-72">
-                {boardState.map((cell, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => handleCellClick(idx)}
-                    className={`h-20 rounded-2xl text-3xl font-black flex items-center justify-center border transition-all ${
-                      cell === '' ? 'bg-slate-950 border-slate-800 hover:border-indigo-500 cursor-pointer' : 'bg-indigo-950/40 border-indigo-500/50 text-indigo-300'
-                    }`}
-                  >
-                    {cell}
-                  </button>
-                ))}
-              </div>
+            {selectedGame === 'chess_duel' ? (
+              // Option 1 Validated Chess Board Render
+              <div className="bg-slate-900/60 p-6 rounded-3xl border border-slate-800 shadow-2xl flex flex-col items-center">
+                <div className="grid grid-cols-8 gap-1 w-80 h-80 sm:w-96 sm:h-96 border-4 border-slate-800 rounded-xl overflow-hidden bg-slate-950">
+                  {chessBoard.map((row, rIdx) =>
+                    row.map((piece, cIdx) => {
+                      const isDarkSquare = (rIdx + cIdx) % 2 === 1;
+                      const isSelected = selectedPieceCoords?.row === rIdx && selectedPieceCoords?.col === cIdx;
+                      return (
+                        <button
+                          key={`${rIdx}-${cIdx}`}
+                          onClick={() => handleChessSquareClick(rIdx, cIdx)}
+                          className={`flex items-center justify-center text-2xl font-black transition-all ${
+                            isDarkSquare ? 'bg-slate-800' : 'bg-slate-300 text-slate-950'
+                          } ${isSelected ? 'ring-4 ring-indigo-500 z-10' : ''}`}
+                        >
+                          {piece}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
 
-              <button 
-                onClick={() => socketRef.current?.emit('conclude_match', { roomId: currentRoom.roomId, isDraw: false, winnerId: socketRef.current?.id, payout: matchPool })}
-                className="mt-8 px-8 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 font-extrabold text-white rounded-xl text-xs shadow-lg uppercase tracking-wider"
-              >
-                🏆 Claim Win & Allocate Funds
-              </button>
-            </div>
+                <button 
+                  onClick={() => socketRef.current?.emit('conclude_match', { roomId: currentRoom.roomId, isDraw: false, winnerId: socketRef.current?.id, payout: matchPool })}
+                  className="mt-6 px-8 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 font-extrabold text-white rounded-xl text-xs shadow-lg uppercase tracking-wider"
+                >
+                  🏆 Claim Checkmate Victory
+                </button>
+              </div>
+            ) : (
+              // Default Tic-Tac-Toe Grid Matrix
+              <div className="bg-slate-900/60 p-8 rounded-3xl border border-slate-800 shadow-2xl flex flex-col items-center">
+                <div className="grid grid-cols-3 gap-4 w-72 h-72">
+                  {boardState.map((cell, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleCellClick(idx)}
+                      className={`h-20 rounded-2xl text-3xl font-black flex items-center justify-center border transition-all ${
+                        cell === '' ? 'bg-slate-950 border-slate-800 hover:border-indigo-500 cursor-pointer' : 'bg-indigo-950/40 border-indigo-500/50 text-indigo-300'
+                      }`}
+                    >
+                      {cell}
+                    </button>
+                  ))}
+                </div>
+
+                <button 
+                  onClick={() => socketRef.current?.emit('conclude_match', { roomId: currentRoom.roomId, isDraw: false, winnerId: socketRef.current?.id, payout: matchPool })}
+                  className="mt-8 px-8 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 font-extrabold text-white rounded-xl text-xs shadow-lg uppercase tracking-wider"
+                >
+                  🏆 Claim Win & Allocate Funds
+                </button>
+              </div>
+            )}
           </div>
 
         )}
