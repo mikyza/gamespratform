@@ -5,7 +5,6 @@ import { io, Socket } from 'socket.io-client';
 import Auth from './components/Auth';
 import Dashboard from './components/Dashboard';
 
-// Ensures frontend always communicates with your live Render backend
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://gamespratform.onrender.com';
 
 const GAME_EMBED_URLS: Record<string, string> = {
@@ -28,17 +27,16 @@ export default function Home() {
 
   useEffect(() => {
     if (user && !socketRef.current) {
-      // Connects directly to the Render backend port
       socketRef.current = io(BACKEND_URL, {
-        transports: ['websocket', 'polling'], // Ensures stable connection
+        transports: ['websocket', 'polling'],
       });
 
       socketRef.current.on('error', (msg: string) => alert(msg));
       socketRef.current.on('waiting_for_opponent', () => setMatchState('waiting'));
-      socketRef.current.on('game_start', (match: any) => setMatchState('playing'));
+      socketRef.current.on('game_start', () => setMatchState('playing'));
       
       socketRef.current.on('match_settled', ({ payout, isDraw }: { payout: number, isDraw: boolean }) => {
-        alert(isDraw ? '🤝 Game Drawn! Bets fully refunded.' : `🎉 Game Over! Payout: KES ${payout}`);
+        alert(isDraw ? '🤝 Game Drawn! Bets fully refunded.' : `🏆 Game Over! Payout: KES ${payout}`);
         setMatchState(null);
       });
     }
@@ -74,76 +72,115 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-[#121212] text-gray-100 font-sans selection:bg-indigo-500 selection:text-white p-4 md:p-8 flex flex-col items-center">
+    <div className="min-h-screen bg-[#0b0f19] text-slate-100 selection:bg-indigo-500 selection:text-white flex flex-col antialiased">
       
-      {/* Header Section */}
-      <header className="w-full max-w-5xl flex justify-between items-center mb-8 md:mb-12">
-        <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 text-transparent bg-clip-text drop-shadow-sm">
-          🏆 Arena Platform
-        </h1>
-        {user && (
-          <div className="bg-gray-800/80 px-4 py-2 rounded-full border border-gray-700 shadow-sm flex items-center gap-2 text-sm md:text-base font-medium">
-            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-            {user.username || 'Player'}
+      {/* Navigation Header */}
+      <header className="sticky top-0 z-50 w-full bg-slate-900/80 backdrop-blur-xl border-b border-slate-800/80 shadow-lg">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 sm:h-20 flex items-center justify-between gap-4">
+          
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 text-xl font-bold">
+              🏆
+            </div>
+            <div>
+              <h1 className="text-lg sm:text-2xl font-black tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 text-transparent bg-clip-text">
+                Arena Platform
+              </h1>
+              <p className="text-[10px] sm:text-xs text-indigo-400 font-semibold tracking-wider uppercase hidden sm:block">
+                Real-Time Multiplayer Gaming
+              </p>
+            </div>
           </div>
-        )}
+
+          {user && (
+            <div className="flex items-center gap-3">
+              <div className="hidden md:flex items-center gap-2 bg-slate-800/60 border border-slate-700/60 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-300">
+                <span className="text-emerald-400 font-bold">KES {user.real_balance ?? 0}</span>
+                <span className="text-slate-500">|</span>
+                <span className="text-amber-400 font-bold">{user.demo_balance ?? 1000} Demo</span>
+              </div>
+
+              <div className="bg-slate-800/90 px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl border border-slate-700/80 shadow-inner flex items-center gap-2 text-xs sm:text-sm font-bold text-slate-200">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>{user.username || user.loginId || 'Player'}</span>
+              </div>
+
+              <button
+                onClick={() => setUser(null)}
+                className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-semibold transition-all"
+              >
+                Logout
+              </button>
+            </div>
+          )}
+        </div>
       </header>
 
-      {/* Main Content Area */}
-      <main className="w-full max-w-5xl">
+      {/* Main Content Layout */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10 flex flex-col justify-center">
         {!user ? (
-          <div className="bg-gray-900/50 backdrop-blur-md border border-gray-800 rounded-3xl p-6 md:p-10 shadow-2xl">
+          <div className="max-w-md w-full mx-auto bg-slate-900/70 backdrop-blur-xl border border-slate-800/90 rounded-3xl p-6 sm:p-10 shadow-2xl shadow-indigo-950/20">
             <Auth onLogin={setUser} />
           </div>
         ) : matchState ? (
-          <div className="bg-gray-900/50 backdrop-blur-md border border-gray-800 rounded-3xl p-4 md:p-8 shadow-2xl w-full flex flex-col items-center animate-fade-in">
+          <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-800 rounded-3xl p-4 sm:p-8 shadow-2xl w-full flex flex-col items-center">
             
-            {/* Waiting State UI */}
+            {/* Finding Match Scanner */}
             {matchState === 'waiting' ? (
-              <div className="flex flex-col items-center justify-center py-16 text-center space-y-6">
-                <div className="relative flex justify-center items-center w-20 h-20">
-                  <div className="absolute w-full h-full border-4 border-indigo-500/30 rounded-full animate-ping"></div>
-                  <div className="absolute w-16 h-16 border-4 border-t-indigo-500 border-r-purple-500 border-b-transparent border-l-transparent rounded-full animate-spin"></div>
+              <div className="flex flex-col items-center justify-center py-20 text-center space-y-6">
+                <div className="relative flex justify-center items-center w-24 h-24">
+                  <div className="absolute w-full h-full border-4 border-indigo-500/20 rounded-full animate-ping"></div>
+                  <div className="absolute w-20 h-20 border-4 border-t-indigo-500 border-r-purple-500 border-b-transparent border-l-transparent rounded-full animate-spin"></div>
+                  <span className="text-2xl">⚔️</span>
                 </div>
                 <div>
-                  <h2 className="text-2xl md:text-3xl font-bold text-gray-100">Finding Opponent...</h2>
-                  <p className="text-gray-400 mt-2">Waiting for someone to join the {activeGame} arena.</p>
+                  <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">Finding Opponent...</h2>
+                  <p className="text-sm sm:text-base text-slate-400 mt-2">
+                    Searching for an active challenger in the <span className="text-indigo-400 font-bold capitalize">{activeGame}</span> arena.
+                  </p>
                 </div>
               </div>
             ) : (
               
-              /* Playing State UI */
+              /* Live Game Session */
               <div className="w-full flex flex-col gap-6">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-xl md:text-2xl font-bold text-gray-100 uppercase tracking-wide">
-                    🎮 Playing: <span className="text-indigo-400">{activeGame}</span>
-                  </h2>
-                  <div className="px-3 py-1 bg-red-500/10 text-red-400 border border-red-500/20 rounded-full text-xs font-bold uppercase tracking-wider animate-pulse">
-                    Live Match
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
+                  <div className="flex items-center gap-3">
+                    <span className="px-3 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-lg text-xs font-black uppercase tracking-widest">
+                      Live Match
+                    </span>
+                    <h2 className="text-lg sm:text-2xl font-black text-white capitalize">
+                      {activeGame}
+                    </h2>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                    Connected to Server
                   </div>
                 </div>
                 
-                {/* Responsive Iframe Container */}
-                <div className="w-full bg-black rounded-xl overflow-hidden border-2 border-gray-800 shadow-[0_0_40px_rgba(99,102,241,0.15)]">
+                {/* Embedded Game Viewer */}
+                <div className="w-full bg-black rounded-2xl overflow-hidden border border-slate-800 shadow-2xl relative min-h-[450px] sm:min-h-[600px]">
                   <iframe
                     src={GAME_EMBED_URLS[activeGame] || GAME_EMBED_URLS.chess}
-                    className="w-full h-[60vh] md:h-[70vh] min-h-[400px] border-none"
+                    className="w-full h-[60vh] sm:h-[70vh] min-h-[450px] border-none"
                     title="Live Game Session"
                     allowFullScreen
                   />
                 </div>
 
-                {/* Match Action Buttons */}
-                <div className="flex flex-col sm:flex-row gap-4 justify-end mt-2">
+                {/* Match Action Bar */}
+                <div className="flex flex-col sm:flex-row gap-3 justify-end pt-2">
                   <button 
                     onClick={() => handleFinishMatch(true)}
-                    className="order-2 sm:order-1 px-6 py-3 md:py-4 rounded-xl font-bold text-red-300 bg-red-950/40 border border-red-900/50 hover:bg-red-900/60 hover:text-red-100 transition-all duration-200 ease-in-out shadow-sm active:scale-95"
+                    className="w-full sm:w-auto px-6 py-3.5 rounded-xl font-bold text-red-300 bg-red-950/40 border border-red-900/60 hover:bg-red-900/50 transition-all duration-200 active:scale-[0.98] text-sm"
                   >
                     🤝 Declare Draw
                   </button>
                   <button 
                     onClick={() => handleFinishMatch(false)}
-                    className="order-1 sm:order-2 px-6 py-3 md:py-4 rounded-xl font-bold text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 shadow-lg hover:shadow-indigo-500/25 transition-all duration-200 ease-in-out active:scale-95"
+                    className="w-full sm:w-auto px-6 py-3.5 rounded-xl font-bold text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 shadow-lg shadow-indigo-600/20 transition-all duration-200 active:scale-[0.98] text-sm"
                   >
                     🏆 Claim Victory & Settle Payout
                   </button>
