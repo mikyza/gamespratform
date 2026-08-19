@@ -27,8 +27,16 @@ export default function Home() {
 
   useEffect(() => {
     if (user && !socketRef.current) {
+      // Connect via long-polling first, then upgrade to websocket (bypasses Render 502 handshake issues)
       socketRef.current = io(BACKEND_URL, {
-        transports: ['websocket', 'polling'], 
+        transports: ['polling', 'websocket'],
+        reconnectionAttempts: 5,
+        reconnectionDelay: 2000,
+        autoConnect: true,
+      });
+
+      socketRef.current.on('connect_error', (err) => {
+        console.warn('Socket connection error:', err.message);
       });
 
       socketRef.current.on('error', (msg: string) => alert(`⚠️ ${msg}`));
