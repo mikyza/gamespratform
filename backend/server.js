@@ -1,71 +1,65 @@
-require('dotenv').config();
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const http = require('http');
-const { Server } = require('socket.io');
-
-const authRoutes = require('./routes/authRoutes');
-const adminRoutes = require('./routes/adminRoutes');
-const socketHandler = require('./sockets/gameHandler');
+import express from 'express';
+import { createServer } from 'http';
+import { Server, Socket } from 'socket.io';
+import { Message, User } from '../shared/types';
 
 const app = express();
-const server = http.createServer(app);
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: { origin: '*', methods: ['GET', 'POST'] }
+});
 
-// 1. Strict CORS to fix Render proxy blocking
-const ALLOWED_ORIGINS = [
-  'https://gamespratform-1.onrender.com',
-  'https://gamespratform.onrender.com',
-  'http://localhost:3000',
-];
+const onlineUsers = new Map<string, string>(); // userId -> socketId
 
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || ALLOWED_ORIGINS.includes(origin) || origin.endsWith('.onrender.com')) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+io.on('connection', (socket: Socket) => {
+  const userId = socket.handshake.auth.userId;
+  onlineUsers.set(userId, socket.id);
+  
+  // Broadcast presence
+  socket.broadcast.emit('user_status', { userId, isOnline: true });
+
+  // 1. Messaging & Groups
+  socket.on('join_room', (roomId: string) => {
+    socket.join(roomId);
+  });
+
+  socket.on('send_message', (msg: Message) => {
+    // Acknowledge sent status to sender
+    socket.emit('message_status', { msgId: msg.id, status: 'sent' });
+    // Broadcast to room
+    socket.to(msg.roomId).emit('receive_message', msg);
+  });
+
+  socket.on('message_read', ({ msgId, roomId, readerId }) => {
+    socket.to(roomId).emit('message_status_update', { msgId, status: 'read', readerId });
+  });
+
+  // 2. WebRTC Signaling
+  socket.on('initiate_call', ({ targetId, type, offer }) => {
+    const targetSocket = onlineUsers.get(targetId);
+    if (targetSocket) {
+      io.to(targetSocket).emit('incoming_call', { callerId: userId, type, offer });
     }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-}));
+  });
 
-app.use(express.json());
+  socket.on('answer_call', ({ targetId, answer }) => {
+    const targetSocket = onlineUsers.get(targetId);
+    if (targetSocket) {
+      io.to(targetSocket).emit('call_answered', { answer });
+    }
+  });
 
-// 2. Socket.IO configuration forcing Websocket first
-const io = new Server(server, {
-  cors: {
-    origin: ALLOWED_ORIGINS,
-    methods: ['GET', 'POST'],
-    credentials: true,
-  },
-  transports: ['websocket', 'polling'],
-  allowEIO3: true,
+  socket.on('ice_candidate', ({ targetId, candidate }) => {
+    const targetSocket = onlineUsers.get(targetId);
+    if (targetSocket) {
+      io.to(targetSocket).emit('ice_candidate', { candidate });
+    }
+  });
+
+  socket.on('disconnect', () => {
+    onlineUsers.delete(userId);
+    socket.broadcast.emit('user_status', { userId, isOnline: false, lastSeen: new Date() });
+  });
 });
 
-// 3. Health Checks (Required by Render immediately on boot)
-app.get('/', (req, res) => res.status(200).send('Arena Platform Backend Live 🚀'));
-app.get('/health', (req, res) => res.status(200).json({ status: 'OK' }));
-
-// 4. API Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/admin', adminRoutes);
-
-// Initialize Socket Handlers
-socketHandler(io);
-
-// 5. START SERVER FIRST, THEN CONNECT TO DB
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
-
-if (process.env.MONGODB_URI) {
-  mongoose
-    .connect(process.env.MONGODB_URI)
-    .then(() => console.log('✅ MongoDB Connected Successfully'))
-    .catch((err) => console.error('❌ MongoDB Connection Error:', err));
-} else {
-  console.error('⚠️ Warning: MONGODB_URI is missing from environment variables.');
-}
+httpServer.listen(4000, () => console.log('Signaling server running on port 4000'));
