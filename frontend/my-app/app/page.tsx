@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
+import Link from 'next/link';
 
 import Auth from './components/Auth';
 import Dashboard from './components/Dashboard';
@@ -27,12 +28,11 @@ export default function Home() {
 
   useEffect(() => {
     if (user && !socketRef.current) {
-      // Connect via long-polling first, then upgrade to websocket (bypasses Render 502 handshake issues)
       socketRef.current = io(BACKEND_URL, {
-        transports: ['polling', 'websocket'],
-        reconnectionAttempts: 5,
+        transports: ['websocket', 'polling'], // Prioritize websocket[cite: 4]
+        withCredentials: true,
+        reconnectionAttempts: 10,
         reconnectionDelay: 2000,
-        autoConnect: true,
       });
 
       socketRef.current.on('connect_error', (err) => {
@@ -109,6 +109,14 @@ export default function Home() {
 
         {user && (
           <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end border-t sm:border-t-0 pt-3 sm:pt-0 border-slate-800">
+            
+            {/* NEW: Admin Panel Link (Only visible if user is admin) */}
+            {user.role === 'admin' && (
+              <Link href="/admin" className="px-3.5 py-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 rounded-xl text-xs sm:text-sm font-bold transition-all">
+                ⚙️ Admin Panel
+              </Link>
+            )}
+
             <div className="flex items-center gap-2 bg-slate-800/80 px-3.5 py-1.5 rounded-xl border border-slate-700/60 text-xs sm:text-sm font-semibold">
               <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></div>
               <span className="text-slate-200">{user.username || user.email?.split('@')[0] || 'Player'}</span>
@@ -132,36 +140,13 @@ export default function Home() {
           </div>
         ) : matchState ? (
           <div className="bg-slate-900/50 backdrop-blur-xl border border-slate-800/80 rounded-3xl p-4 sm:p-6 lg:p-8 shadow-2xl w-full flex flex-col items-center">
-            
-            {/* Searching for Player Overlay */}
-            {matchState === 'waiting' ? (
-              <div className="flex flex-col items-center justify-center py-16 sm:py-24 text-center space-y-6">
-                <div className="relative flex justify-center items-center w-20 h-20">
-                  <div className="absolute w-full h-full border-4 border-indigo-500/20 rounded-full animate-ping"></div>
-                  <div className="absolute w-16 h-16 border-4 border-t-indigo-500 border-r-purple-500 border-b-transparent border-l-transparent rounded-full animate-spin"></div>
-                </div>
-                <div>
-                  <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-100">Finding Opponent...</h2>
-                  <p className="text-slate-400 text-sm sm:text-base mt-2">
-                    Searching for a player in the <span className="font-semibold text-indigo-400 uppercase">{activeGame}</span> arena.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              
-              /* Live Game Frame & Controls */
-              <div className="w-full flex flex-col gap-5">
+            {/* Embed & Live Controls Area */}
+             <div className="w-full flex flex-col gap-5">
                 <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950/60 p-3.5 sm:p-4 rounded-2xl border border-slate-800">
                   <h2 className="text-base sm:text-xl font-black text-slate-100 uppercase tracking-wide flex items-center gap-2">
                     🎮 Arena: <span className="text-indigo-400">{activeGame}</span>
                   </h2>
-                  <span className="px-3 py-1 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded-full text-[10px] sm:text-xs font-black uppercase tracking-widest animate-pulse flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 bg-rose-500 rounded-full"></span>
-                    Live Match
-                  </span>
                 </div>
-                
-                {/* Embed Screen */}
                 <div className="w-full bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 shadow-[0_0_50px_rgba(99,102,241,0.1)] relative">
                   <iframe
                     src={GAME_EMBED_URLS[activeGame] || GAME_EMBED_URLS.chess}
@@ -170,24 +155,11 @@ export default function Home() {
                     allowFullScreen
                   />
                 </div>
-
-                {/* Match Settlement Controls */}
                 <div className="flex flex-col sm:flex-row gap-3 justify-end mt-1">
-                  <button 
-                    onClick={() => handleFinishMatch(true)}
-                    className="order-2 sm:order-1 px-5 py-3.5 rounded-xl font-bold text-slate-300 bg-slate-800 hover:bg-slate-700 transition-all text-sm active:scale-95"
-                  >
-                    🤝 Declare Draw
-                  </button>
-                  <button 
-                    onClick={() => handleFinishMatch(false)}
-                    className="order-1 sm:order-2 px-7 py-3.5 rounded-xl font-extrabold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-lg shadow-emerald-600/20 transition-all text-sm active:scale-95"
-                  >
-                    🏆 Claim Victory & Settle Payout
-                  </button>
+                  <button onClick={() => handleFinishMatch(true)} className="px-5 py-3.5 rounded-xl font-bold text-slate-300 bg-slate-800 hover:bg-slate-700">🤝 Declare Draw</button>
+                  <button onClick={() => handleFinishMatch(false)} className="px-7 py-3.5 rounded-xl font-extrabold text-white bg-gradient-to-r from-emerald-600 to-teal-600">🏆 Claim Victory</button>
                 </div>
               </div>
-            )}
           </div>
         ) : (
           <Dashboard user={user} onJoinMatch={handleJoinMatch} />
