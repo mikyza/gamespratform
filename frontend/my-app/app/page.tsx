@@ -121,7 +121,14 @@ export default function Home() {
 
   useEffect(() => {
     if (user && !socketRef.current) {
-      socketRef.current = io(BACKEND_URL, { transports: ['websocket'], withCredentials: true });
+      // Updated socket options to permit polling fallback for Render cold-starts
+      socketRef.current = io(BACKEND_URL, { 
+        transports: ['polling', 'websocket'], 
+        withCredentials: true,
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000
+      });
 
       socketRef.current.on('connect', () => {
         socketRef.current?.emit('register_presence', {
