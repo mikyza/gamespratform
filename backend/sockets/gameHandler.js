@@ -4,7 +4,7 @@ const activeRooms = new Map(); // Tracks live game sessions and moves
 
 module.exports = (io) => {
   io.on('connection', (socket) => {
-    
+
     socket.on('register_presence', (userData) => {
       onlineUsers.set(socket.id, {
         socketId: socket.id,
@@ -35,7 +35,7 @@ module.exports = (io) => {
 
       activeRooms.set(roomId, room);
       socket.join(roomId);
-      
+
       host.status = 'Waiting in Room';
       io.emit('online_users_update', Array.from(onlineUsers.values()));
       io.emit('rooms_list_update', Array.from(activeRooms.values()));
@@ -83,10 +83,28 @@ module.exports = (io) => {
       io.emit('rooms_list_update', Array.from(activeRooms.values()));
     });
 
-    // Real-Time Click / Move Sync between active players
+    // Real-Time Click / Move Sync with Rule Validation
     socket.on('make_move', ({ roomId, moveData }) => {
-      // Broadcast player click/move action instantly to the other opponent(s) in the room
-      socket.to(roomId).emit('opponent_moved', moveData);
+      const room = activeRooms.get(roomId);
+      if (!room) return;
+
+      // Rule Validation: Enforce alternating turns for Chess, Checkers, and Tic-Tac-Toe
+      if (room.gameState.turn && room.gameState.turn !== socket.id) {
+        socket.emit('error', '⚠️ Rule Violation: It is not your turn to play!');
+        return;
+      }
+
+      // Determine the next player's turn pointer
+      const nextPlayer = room.players.find(p => p.socketId !== socket.id);
+      if (nextPlayer) {
+        room.gameState.turn = nextPlayer.socketId;
+      }
+
+      // Broadcast player click/move action and updated turn state to the other opponent(s) in the room
+      socket.to(roomId).emit('opponent_moved', {
+        ...moveData,
+        nextTurnSocket: room.gameState.turn
+      });
     });
 
     // Settle Match & Allocate Funds
