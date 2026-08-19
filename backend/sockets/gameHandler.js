@@ -1,89 +1,71 @@
-const User = require('../models/User');
-const Match = require('../models/Match');
+// sockets/gameHandler.js
+const waitingPlayers = new Map(); // Tracks players in the waiting room
+const activeMatches = new Map();
 
-module.exports = function(io) {
-  const activeRooms = {}; // Stores game state and disconnect timers
-
+module.exports = (io) => {
   io.on('connection', (socket) => {
-    socket.on('join_match', async ({ userId, gameType, mode, entryFee }) => {
-      // 1. Escrow Lock / Balance Check
-      const user = await User.findById(userId);
-      const balanceField = mode === 'MONEY' ? 'real_balance' : 'demo_balance';
-      const escrowField = mode === 'MONEY' ? 'real_escrow' : 'demo_escrow';
-
-      if (user[balanceField] < entryFee) {
-        return socket.emit('error', 'Insufficient balance');
-      }
-
-      // Deduct balance, add to escrow
-      user[balanceField] -= entryFee;
-      user[escrowField] += entryFee;
-      await user.save();
-
-      // 2. Matchmaking
-      let match = await Match.findOne({ game_type: gameType, mode, entry_fee: entryFee, status: 'WAITING' });
+    
+    // 1. Join Match / Waiting Room Logic
+    socket.on('join_match', (data) => {
+      const { userId, gameType, mode, entryFee, country = "Kenya", badge = "Novice", username } = data;
       
-      if (!match) {
-        match = new Match({ game_type: gameType, mode, entry_fee: entryFee, players: [userId] });
-        await match.save();
-        socket.join(match._id.toString());
-        socket.emit('waiting_for_opponent', match._id);
-      } else {
-        match.players.push(userId);
-        match.status = 'IN_PROGRESS';
-        await match.save();
+      // Look for an opponent with the exact same entry fee and game type
+      const potentialOpponentId = [...waitingPlayers.keys()].find((id) => {
+        const player = waitingPlayers.get(id);
+        return player.gameType === gameType && player.entryFee === entryFee && id !== socket.id;
+      });
+
+      if (potentialOpponentId) {
+        // Match found - Pair them up
+        const opponent = waitingPlayers.get(potentialOpponentId);
+        const matchId = `match_${Date.now()}`;
         
-        socket.join(match._id.toString());
-        io.to(match._id.toString()).emit('game_start', match);
-        activeRooms[match._id.toString()] = { match, players: match.players, state: {} };
+        waitingPlayers.delete(potentialOpponentId);
+        
+        activeMatches.set(matchId, {
+          player1: { socketId: socket.id, ...data },
+          player2: { socketId: potentialOpponentId, ...opponent },
+          entryFee,
+          pool: entryFee * 2
+        });
+
+        socket.join(matchId);
+        io.sockets.sockets.get(potentialOpponentId).join(matchId);
+
+        io.to(matchId).emit('game_start', { matchId, pool: entryFee * 2 });
+      } else {
+        // No match found - Add to waiting room
+        waitingPlayers.set(socket.id, { socketId: socket.id, userId, gameType, entryFee, country, badge, username });
+        socket.emit('waiting_for_opponent');
+        
+        // Broadcast the updated waiting room to everyone so users can see who is online
+        io.emit('waiting_room_update', Array.from(waitingPlayers.values()));
       }
     });
 
-    // 3. Server-side Anti-Cheat / Move Validation
-    socket.on('player_move', ({ matchId, userId, moveData }) => {
-      // Here you validate the move against the engine (e.g., Chess.js)
-      // If illegal move -> ignore. If legal -> broadcast state
-      io.to(matchId).emit('update_state', { moveData, userId });
-    });
-
-    // 4. Match Resolution & Money Distribution
+    // 2. End Match & Allocate Funds
     socket.on('match_end', async ({ matchId, winnerId, isDraw }) => {
-      const room = activeRooms[matchId];
-      if (!room) return;
-
-      const match = await Match.findById(matchId);
-      const pool = match.entry_fee * 2;
-      const houseTake = pool * (match.house_edge_percent / 100);
-      const winnerPayout = pool - houseTake;
-
-      const balanceField = match.mode === 'MONEY' ? 'real_balance' : 'demo_balance';
-      const escrowField = match.mode === 'MONEY' ? 'real_escrow' : 'demo_escrow';
+      const match = activeMatches.get(matchId);
+      if (!match) return;
 
       if (isDraw) {
-        // Refund both players
-        await User.updateMany({ _id: { $in: match.players } }, {
-          $inc: { [balanceField]: match.entry_fee, [escrowField]: -match.entry_fee }
-        });
-        match.status = 'DRAWN';
+        // Refund logic
+        io.to(matchId).emit('match_settled', { payout: match.entryFee, isDraw: true });
       } else {
-        // Clear loser's escrow, give winner payout
-        const loserId = match.players.find(id => id.toString() !== winnerId.toString());
-        await User.findByIdAndUpdate(loserId, { $inc: { [escrowField]: -match.entry_fee } });
-        await User.findByIdAndUpdate(winnerId, { 
-          $inc: { [escrowField]: -match.entry_fee, [balanceField]: winnerPayout, total_winnings: winnerPayout } 
-        });
-        match.status = 'COMPLETED';
-        match.winner_id = winnerId;
+        // Winner takes the pool (minus platform fee if you have one)
+        const payout = match.pool;
+        
+        // TODO: Database logic here to actually update user balances
+        // Example: await User.findByIdAndUpdate(winnerId, { $inc: { balance: payout } });
+        
+        io.to(matchId).emit('match_settled', { payout, isDraw: false, winnerId });
       }
-
-      await match.save();
-      io.to(matchId).emit('match_settled', { winnerId, isDraw, payout: winnerPayout });
-      delete activeRooms[matchId];
+      activeMatches.delete(matchId);
     });
 
-    // 5. Disconnect Handling (Auto-forfeit)
     socket.on('disconnect', () => {
-      // Implement a 30s timeout here. If player doesn't reconnect, auto-call match_end with opponent as winner
+      waitingPlayers.delete(socket.id);
+      io.emit('waiting_room_update', Array.from(waitingPlayers.values()));
     });
   });
 };
