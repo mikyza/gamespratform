@@ -6,9 +6,8 @@ const http = require('http');
 const { Server } = require('socket.io');
 
 const authRoutes = require('./routes/authRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 const socketHandler = require('./sockets/gameHandler');
-// NEW: Import admin routes (you will create this file)
-// const adminRoutes = require('./routes/adminRoutes'); 
 
 const app = express();
 const server = http.createServer(app);
@@ -41,7 +40,7 @@ const io = new Server(server, {
     methods: ['GET', 'POST'],
     credentials: true,
   },
-  transports: ['websocket', 'polling'], // Fallback to polling[cite: 5]
+  transports: ['websocket', 'polling'],
   allowEIO3: true,
 });
 
@@ -51,7 +50,7 @@ app.get('/health', (req, res) => res.status(200).json({ status: 'OK' }));
 
 // 4. API Routes
 app.use('/api/auth', authRoutes);
-// app.use('/api/admin', adminRoutes); // Uncomment when ready
+app.use('/api/admin', adminRoutes);
 
 // Initialize Socket Handlers
 socketHandler(io);
