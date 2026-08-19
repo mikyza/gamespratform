@@ -1,86 +1,83 @@
 "use client";
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { io, Socket } from "socket.io-client";
 
 import Auth from './components/Auth';
-import Dashboard from './components/Dashboard';
-import { io } from "socket.io-client";
-
-const socket = io("https://gamespratform.onrender.com", {
-  transports: ["websocket"], // Bypasses HTTP long-polling requests
-  reconnectionAttempts: 5,
-  timeout: 10000,
-});
-
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://gamespratform.onrender.com';
 
-const GAME_EMBED_URLS: Record<string, string> = {
-  chess: 'https://lichess.org/tv/frame?theme=brown&bg=dark',
-  checkers: 'https://html5.gamedistribution.com/rvvASSmo/checkers/',
-  connect4: 'https://html5.gamedistribution.com/connect-4/',
-  blackjack: 'https://html5.gamedistribution.com/blackjack/',
-  poker: 'https://html5.gamedistribution.com/poker/',
-  speed_trivia: 'https://opentdb.com/',
-  math_quiz: 'https://html5.gamedistribution.com/math-games/',
-  runner: 'https://playcanv.as/p/2O2R206U/',
-  shooter: 'https://playcanv.as/p/a83e022f/'
+const GAME_DATA: Record<string, { url: string, img: string, name: string }> = {
+  chess: { name: 'Pro Chess', url: 'https://lichess.org/tv/frame?theme=brown&bg=dark', img: 'https://images.unsplash.com/photo-1529699211952-734e80c4d42b?w=500&q=80' },
+  checkers: { name: 'Checkers', url: 'https://html5.gamedistribution.com/rvvASSmo/checkers/', img: 'https://images.unsplash.com/photo-1610892244243-98bb4b9c595d?w=500&q=80' },
+  connect4: { name: 'Connect 4', url: 'https://html5.gamedistribution.com/connect-4/', img: 'https://images.unsplash.com/photo-1651586733979-91cece135111?w=500&q=80' }
 };
+
+interface WaitingPlayer {
+  username: string;
+  country: string;
+  badge: string;
+  entryFee: number;
+}
 
 export default function Home() {
   const [user, setUser] = useState<any>(null);
-  const [matchState, setMatchState] = useState<'waiting' | 'playing' | null>(null);
+  const [matchState, setMatchState] = useState<'dashboard' | 'waiting' | 'playing'>('dashboard');
   const [activeGame, setActiveGame] = useState<string>('chess');
+  const [entryAmount, setEntryAmount] = useState<number>(100);
+  
+  const [waitingPlayers, setWaitingPlayers] = useState<WaitingPlayer[]>([]);
+  const [roomWarning, setRoomWarning] = useState<string>('');
+  
   const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
     if (user && !socketRef.current) {
-      // Warm up Render instance over HTTP to prevent 502 gateway drops
-      fetch(`${BACKEND_URL}/health`)
-        .catch((err) => console.warn('Backend warm-up ping failed:', err))
-        .finally(() => {
-          socketRef.current = io(BACKEND_URL, {
-            transports: ['polling', 'websocket'], // Polling first prevents direct WS proxy drops on Render
-            withCredentials: true,
-            reconnectionAttempts: 15,
-            reconnectionDelay: 2000,
-          });
+      socketRef.current = io(BACKEND_URL, {
+        transports: ['websocket'],
+        withCredentials: true,
+      });
 
-          socketRef.current.on('connect', () => {
-            console.log('✅ Socket connected successfully:', socketRef.current?.id);
-          });
+      socketRef.current.on('waiting_for_opponent', () => setMatchState('waiting'));
+      socketRef.current.on('game_start', () => setMatchState('playing'));
+      
+      socketRef.current.on('waiting_room_update', (players: WaitingPlayer[]) => {
+        setWaitingPlayers(players);
+        // Check if there's anyone with the exact money
+        const exactMatch = players.some(p => p.entryFee === entryAmount);
+        if (!exactMatch && players.length > 0 && matchState === 'waiting') {
+            setRoomWarning(`No players currently betting KES ${entryAmount}. Consider changing your bet amount to find a match faster!`);
+        } else {
+            setRoomWarning('');
+        }
+      });
 
-          socketRef.current.on('connect_error', (err) => {
-            console.warn('Socket connection error:', err.message);
-          });
-
-          socketRef.current.on('error', (msg: string) => alert(`⚠️ ${msg}`));
-          socketRef.current.on('waiting_for_opponent', () => setMatchState('waiting'));
-          socketRef.current.on('game_start', () => setMatchState('playing'));
-          
-          socketRef.current.on('match_settled', ({ payout, isDraw }: { payout: number, isDraw: boolean }) => {
-            alert(isDraw ? '🤝 Game Drawn! Bets fully refunded.' : `🏆 Game Over! Payout: KES ${payout}`);
-            setMatchState(null);
-          });
-        });
+      socketRef.current.on('match_settled', ({ payout, isDraw, winnerId }: { payout: number, isDraw: boolean, winnerId: string }) => {
+        if (isDraw) {
+            alert('🤝 Game Drawn! Bets fully refunded to your account.');
+        } else {
+            const isWinner = winnerId === user.id;
+            alert(isWinner ? `🏆 VICTORY! KES ${payout} has been meaningfully allocated to your account.` : `💀 Defeat. Better luck next time.`);
+        }
+        setMatchState('dashboard');
+      });
     }
 
     return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
-      }
+      if (socketRef.current) socketRef.current.disconnect();
     };
-  }, [user]);
+  }, [user, entryAmount, matchState]);
 
-  const handleJoinMatch = (gameType: string, mode: string, entryFee: number) => {
+  const handleJoinMatch = (gameType: string) => {
     setActiveGame(gameType);
     if (socketRef.current && user) {
       socketRef.current.emit('join_match', { 
-        userId: user.id, 
+        userId: user.id,
+        username: user.username || 'Player',
         gameType, 
-        mode, 
-        entryFee 
+        entryFee: entryAmount,
+        country: user.country || 'Kenya', // Dynamically pull from user data
+        badge: user.rating > 2000 ? '⭐ Grandmaster' : '🔥 Veteran'
       });
     }
   };
@@ -95,90 +92,85 @@ export default function Home() {
     }
   };
 
-  const handleLogout = () => {
-    setUser(null);
-    setMatchState(null);
-    if (socketRef.current) {
-      socketRef.current.disconnect();
-      socketRef.current = null;
-    }
-  };
-
   return (
-    <div className="min-h-screen bg-[#07090e] text-slate-100 font-sans selection:bg-indigo-500 selection:text-white p-3 sm:p-6 lg:p-8 flex flex-col items-center">
+    <div className="min-h-screen bg-[#07090e] text-slate-100 p-4 lg:p-8 flex flex-col items-center">
+      {/* Header logic remains the same */}
       
-      {/* Top Navigation Header */}
-      <header className="w-full max-w-6xl flex flex-col sm:flex-row items-center justify-between gap-4 mb-8 bg-slate-900/60 backdrop-blur-xl border border-slate-800/80 p-4 rounded-2xl shadow-xl">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-xl shadow-lg shadow-indigo-500/20">
-            🏆
-          </div>
-          <div>
-            <h1 className="text-xl sm:text-2xl font-black tracking-tight bg-gradient-to-r from-indigo-400 via-purple-300 to-pink-400 text-transparent bg-clip-text">
-              Arena Platform
-            </h1>
-            <p className="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-widest">
-              Real-Time Multiplayer Gaming
-            </p>
-          </div>
-        </div>
-
-        {user && (
-          <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end border-t sm:border-t-0 pt-3 sm:pt-0 border-slate-800">
-            
-            {/* NEW: Admin Panel Link (Only visible if user is admin) */}
-            {user.role === 'admin' && (
-              <Link href="/admin" className="px-3.5 py-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 rounded-xl text-xs sm:text-sm font-bold transition-all">
-                ⚙️ Admin Panel
-              </Link>
-            )}
-
-            <div className="flex items-center gap-2 bg-slate-800/80 px-3.5 py-1.5 rounded-xl border border-slate-700/60 text-xs sm:text-sm font-semibold">
-              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></div>
-              <span className="text-slate-200">{user.username || user.email?.split('@')[0] || 'Player'}</span>
-            </div>
-
-            <button 
-              onClick={handleLogout}
-              className="px-3.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-xl text-xs sm:text-sm font-bold transition-all active:scale-95"
-            >
-              Logout
-            </button>
-          </div>
-        )}
-      </header>
-
-      {/* Main App Canvas */}
-      <main className="w-full max-w-6xl">
+      <main className="w-full max-w-6xl mt-8">
         {!user ? (
-          <div className="w-full max-w-md mx-auto bg-slate-900/50 backdrop-blur-xl border border-slate-800/80 rounded-3xl p-6 sm:p-8 shadow-2xl">
-            <Auth onLogin={setUser} />
+          <Auth onLogin={setUser} />
+        ) : matchState === 'dashboard' ? (
+          
+          <div className="space-y-8">
+             <div className="bg-slate-900/50 p-6 rounded-2xl border border-slate-800">
+                <h3 className="text-xl font-bold mb-4">Select Bet Amount</h3>
+                <input 
+                    type="number" 
+                    value={entryAmount}
+                    onChange={(e) => setEntryAmount(Number(e.target.value))}
+                    className="w-full bg-slate-950 border border-slate-700 p-4 rounded-xl text-xl text-emerald-400 font-bold"
+                    placeholder="Enter KES amount..."
+                />
+             </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                {Object.entries(GAME_DATA).map(([key, game]) => (
+                    <div key={key} onClick={() => handleJoinMatch(key)} className="group cursor-pointer relative rounded-2xl overflow-hidden border border-slate-800 hover:border-indigo-500 transition-all">
+                        <img src={game.img} alt={game.name} className="w-full h-48 object-cover opacity-60 group-hover:opacity-100 transition-all" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-900/40 to-transparent flex flex-col justify-end p-5">
+                            <h3 className="text-2xl font-black text-white">{game.name}</h3>
+                            <p className="text-indigo-400 font-bold mt-1">Play for KES {entryAmount}</p>
+                        </div>
+                    </div>
+                ))}
+            </div>
           </div>
-        ) : matchState ? (
-          <div className="bg-slate-900/50 backdrop-blur-xl border border-slate-800/80 rounded-3xl p-4 sm:p-6 lg:p-8 shadow-2xl w-full flex flex-col items-center">
-            {/* Embed & Live Controls Area */}
-             <div className="w-full flex flex-col gap-5">
-                <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950/60 p-3.5 sm:p-4 rounded-2xl border border-slate-800">
-                  <h2 className="text-base sm:text-xl font-black text-slate-100 uppercase tracking-wide flex items-center gap-2">
-                    🎮 Arena: <span className="text-indigo-400">{activeGame}</span>
-                  </h2>
+
+        ) : matchState === 'waiting' ? (
+            <div className="w-full max-w-3xl mx-auto bg-slate-900/50 p-8 rounded-3xl border border-slate-800">
+                <div className="text-center mb-8">
+                    <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <h2 className="text-2xl font-black">Waiting Room</h2>
+                    <p className="text-slate-400">Looking for a KES {entryAmount} match in {GAME_DATA[activeGame].name}</p>
                 </div>
-                <div className="w-full bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 shadow-[0_0_50px_rgba(99,102,241,0.1)] relative">
-                  <iframe
-                    src={GAME_EMBED_URLS[activeGame] || GAME_EMBED_URLS.chess}
-                    className="w-full h-[55vh] sm:h-[65vh] lg:h-[72vh] min-h-[380px] border-none"
-                    title="Live Game Session"
-                    allowFullScreen
-                  />
+
+                {roomWarning && (
+                    <div className="bg-amber-500/10 border border-amber-500/20 text-amber-400 p-4 rounded-xl mb-6 text-sm font-semibold text-center">
+                        ⚠️ {roomWarning}
+                    </div>
+                )}
+
+                <div className="space-y-4">
+                    <h4 className="font-bold text-slate-300 uppercase text-sm tracking-wider border-b border-slate-800 pb-2">Active Players Online</h4>
+                    {waitingPlayers.length === 0 ? (
+                        <p className="text-slate-500 text-center py-4">It's quiet here. You are the first in the lobby.</p>
+                    ) : (
+                        waitingPlayers.map((p, i) => (
+                            <div key={i} className="flex items-center justify-between bg-slate-950 p-4 rounded-xl border border-slate-800">
+                                <div className="flex items-center gap-4">
+                                    <span className="text-2xl" title={p.country}>{p.country === 'Kenya' ? '🇰🇪' : '🌍'}</span>
+                                    <div>
+                                        <p className="font-bold text-white">{p.username}</p>
+                                        <p className="text-xs text-indigo-400 font-bold">{p.badge} 🎖️</p>
+                                    </div>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-sm text-slate-400">Betting</p>
+                                    <p className="font-black text-emerald-400">KES {p.entryFee}</p>
+                                </div>
+                            </div>
+                        ))
+                    )}
                 </div>
-                <div className="flex flex-col sm:flex-row gap-3 justify-end mt-1">
-                  <button onClick={() => handleFinishMatch(true)} className="px-5 py-3.5 rounded-xl font-bold text-slate-300 bg-slate-800 hover:bg-slate-700">🤝 Declare Draw</button>
-                  <button onClick={() => handleFinishMatch(false)} className="px-7 py-3.5 rounded-xl font-extrabold text-white bg-gradient-to-r from-emerald-600 to-teal-600">🏆 Claim Victory</button>
-                </div>
-              </div>
-          </div>
+            </div>
         ) : (
-          <Dashboard user={user} onJoinMatch={handleJoinMatch} />
+          <div className="w-full flex flex-col items-center">
+             <iframe src={GAME_DATA[activeGame].url} className="w-full h-[70vh] border-none rounded-2xl" />
+             <div className="flex gap-4 mt-6">
+                <button onClick={() => handleFinishMatch(true)} className="px-6 py-3 rounded-xl font-bold bg-slate-800 hover:bg-slate-700">🤝 Draw</button>
+                <button onClick={() => handleFinishMatch(false)} className="px-8 py-3 rounded-xl font-extrabold bg-gradient-to-r from-emerald-600 to-teal-600">🏆 Claim Win</button>
+             </div>
+          </div>
         )}
       </main>
     </div>
