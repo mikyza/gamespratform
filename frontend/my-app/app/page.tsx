@@ -28,25 +28,34 @@ export default function Home() {
 
   useEffect(() => {
     if (user && !socketRef.current) {
-      socketRef.current = io(BACKEND_URL, {
-        transports: ['websocket', 'polling'], // Prioritize websocket[cite: 4]
-        withCredentials: true,
-        reconnectionAttempts: 10,
-        reconnectionDelay: 2000,
-      });
+      // Warm up Render instance over HTTP to prevent 502 gateway drops
+      fetch(`${BACKEND_URL}/health`)
+        .catch((err) => console.warn('Backend warm-up ping failed:', err))
+        .finally(() => {
+          socketRef.current = io(BACKEND_URL, {
+            transports: ['polling', 'websocket'], // Polling first prevents direct WS proxy drops on Render
+            withCredentials: true,
+            reconnectionAttempts: 15,
+            reconnectionDelay: 2000,
+          });
 
-      socketRef.current.on('connect_error', (err) => {
-        console.warn('Socket connection error:', err.message);
-      });
+          socketRef.current.on('connect', () => {
+            console.log('✅ Socket connected successfully:', socketRef.current?.id);
+          });
 
-      socketRef.current.on('error', (msg: string) => alert(`⚠️ ${msg}`));
-      socketRef.current.on('waiting_for_opponent', () => setMatchState('waiting'));
-      socketRef.current.on('game_start', () => setMatchState('playing'));
-      
-      socketRef.current.on('match_settled', ({ payout, isDraw }: { payout: number, isDraw: boolean }) => {
-        alert(isDraw ? '🤝 Game Drawn! Bets fully refunded.' : `🏆 Game Over! Payout: KES ${payout}`);
-        setMatchState(null);
-      });
+          socketRef.current.on('connect_error', (err) => {
+            console.warn('Socket connection error:', err.message);
+          });
+
+          socketRef.current.on('error', (msg: string) => alert(`⚠️ ${msg}`));
+          socketRef.current.on('waiting_for_opponent', () => setMatchState('waiting'));
+          socketRef.current.on('game_start', () => setMatchState('playing'));
+          
+          socketRef.current.on('match_settled', ({ payout, isDraw }: { payout: number, isDraw: boolean }) => {
+            alert(isDraw ? '🤝 Game Drawn! Bets fully refunded.' : `🏆 Game Over! Payout: KES ${payout}`);
+            setMatchState(null);
+          });
+        });
     }
 
     return () => {
